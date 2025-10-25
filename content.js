@@ -1,69 +1,39 @@
-// content.js - PenPal overlay (robust single-instance + minimize/restore + persistence)
 (() => {
-  // Use a single global object so repeated injections share state
+  // single global object to avoid duplicate injections
   if (!window.__penpal_global) {
-    window.__penpal_global = {
-      overlay: null,
-      isMinimized: false,
-      savedSize: null,    // { width, height }
-      initialized: false,
-    };
+    window.__penpal_global = { overlay: null, isMinimized: false, savedSize: null, initialized: false };
   }
-
   const G = window.__penpal_global;
-
-  // If we've already initialized the message listener, just return (no duplication).
-  if (G.initialized) {
-    // already ready to receive messages
-    return;
-  }
+  if (G.initialized) return;
   G.initialized = true;
 
   const STORAGE_KEY = "penpal-overlay";
 
-  // Helpers for storage
   function loadState() {
-    try {
-      return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
-    } catch {
-      return {};
-    }
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"); }
+    catch { return {}; }
   }
   function saveState(state) {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch {}
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
   }
 
-  function clampToViewport(val, size) {
-    // simple clamp helper (not necessary but avoids off-screen positions)
-    const n = parseInt(val, 10);
-    if (isNaN(n)) return size;
-    return `${Math.max(10, Math.min(n, window.innerWidth - 40))}px`;
-  }
-
-  // Create overlay (only once)
+  // ---------- Overlay creation (kept robust) ----------
   function createOverlay() {
-    if (G.overlay && G.overlay.isConnected) {
-      // Already present in DOM
-      return G.overlay;
-    }
+    if (G.overlay && G.overlay.isConnected) return G.overlay;
 
-    // read saved state (top, left, width, height)
     const saved = loadState();
     const startTop = saved.top || "60px";
     const startLeft = saved.left || "60px";
     const startWidth = saved.width || "360px";
     const startHeight = saved.height || "220px";
 
-    // root
     const overlay = document.createElement("div");
     overlay.id = "penpal-overlay";
-    overlay.setAttribute("aria-label", "PenPal overlay");
     overlay.innerHTML = `
       <div id="penpal-header" role="toolbar">
         <div id="penpal-title">PenPal AI</div>
         <div id="penpal-controls">
+          <button id="penpal-select">Select Content</button>
           <button id="penpal-minimize" title="Minimize">–</button>
           <button id="penpal-close" title="Close">✕</button>
         </div>
@@ -77,7 +47,6 @@
       </div>
     `;
 
-    // Base styles: dark gray translucent, white text, purple border/highlights
     Object.assign(overlay.style, {
       position: "fixed",
       top: startTop,
@@ -88,7 +57,7 @@
       color: "white",
       border: "2px solid rgba(126,87,194,0.95)",
       borderRadius: "10px",
-      zIndex: 2147483647, // maximum to avoid being hidden
+      zIndex: 2147483647,
       padding: "0",
       boxSizing: "border-box",
       resize: "both",
@@ -101,129 +70,60 @@
       userSelect: "none"
     });
 
-    // Header styles
+    // header & controls styling (kept concise)
     const header = overlay.querySelector("#penpal-header");
     const title = overlay.querySelector("#penpal-title");
     const controls = overlay.querySelector("#penpal-controls");
-    Object.assign(header.style, {
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between",
-      padding: "8px 10px",
-      gap: "8px",
-      cursor: "move", // draggable
-      background: "linear-gradient(90deg, rgba(0,0,0,0.05), rgba(0,0,0,0.04))",
-      borderTopLeftRadius: "8px",
-      borderTopRightRadius: "8px",
-    });
+    Object.assign(header.style, { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 10px", gap: "8px", cursor: "move" });
+    Object.assign(title.style, { fontWeight: "600", color: "white", fontSize: "14px", pointerEvents: "none" });
+    Object.assign(controls.style, { display: "flex", gap: "6px", alignItems: "center" });
 
-    Object.assign(title.style, {
-      fontWeight: "600",
+    // style select button to fit theme
+    const selectBtn = overlay.querySelector("#penpal-select");
+    Object.assign(selectBtn.style, {
+      background: "transparent",
       color: "white",
-      fontSize: "14px",
-      pointerEvents: "none"
-    });
-
-    Object.assign(controls.style, {
-      display: "flex",
-      gap: "6px",
-      alignItems: "center"
-    });
-
-    // Buttons style
-    overlay.querySelectorAll("#penpal-controls button").forEach(btn => {
-      Object.assign(btn.style, {
-        background: "transparent",
-        border: "none",
-        color: "white",
-        fontSize: "16px",
-        cursor: "pointer",
-        width: "28px",
-        height: "28px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        borderRadius: "6px"
-      });
-      btn.addEventListener("mouseenter", () => {
-        btn.style.background = "rgba(126,87,194,0.18)";
-      });
-      btn.addEventListener("mouseleave", () => {
-        btn.style.background = "transparent";
-      });
-    });
-
-    // Body styles
-    const body = overlay.querySelector("#penpal-body");
-    Object.assign(body.style, {
-      padding: "10px",
-      display: "flex",
-      flexDirection: "column",
-      gap: "8px",
-      flex: "1 1 auto",
-      overflow: "auto",
-      backgroundColor: "transparent"
-    });
-
-    const input = overlay.querySelector("#penpal-input");
-    Object.assign(input.style, {
-      width: "100%",
-      minHeight: "72px",
-      resize: "none",
-      borderRadius: "6px",
       border: "1px solid rgba(255,255,255,0.06)",
-      background: "rgba(255,255,255,0.03)",
-      color: "white",
-      padding: "8px",
-      boxSizing: "border-box",
-      fontSize: "13px",
-      fontFamily: "inherit"
-    });
-
-    const sendBtn = overlay.querySelector("#penpal-send");
-    Object.assign(sendBtn.style, {
-      background: "linear-gradient(180deg, #7e57c2, #6a3eb6)",
-      color: "white",
-      border: "none",
-      padding: "8px 12px",
-      borderRadius: "8px",
-      cursor: "pointer",
-      alignSelf: "flex-start"
-    });
-
-    const response = overlay.querySelector("#penpal-response");
-    Object.assign(response.style, {
-      background: "rgba(255,255,255,0.02)",
+      padding: "6px 8px",
       borderRadius: "6px",
-      padding: "8px",
-      minHeight: "40px",
-      color: "white",
-      border: "1px solid rgba(255,255,255,0.02)",
+      cursor: "pointer",
       fontSize: "13px"
     });
 
-    // Add to DOM
+    // move other buttons into purple hover
+    overlay.querySelectorAll("#penpal-controls button:not(#penpal-select)").forEach(btn => {
+      Object.assign(btn.style, { background: "transparent", border: "none", color: "white", fontSize: "16px", cursor: "pointer", width: "28px", height: "28px" });
+      btn.addEventListener("mouseenter", () => btn.style.background = "rgba(126,87,194,0.18)");
+      btn.addEventListener("mouseleave", () => btn.style.background = "transparent");
+    });
+
+    // body/input/send/response styling
+    const body = overlay.querySelector("#penpal-body");
+    Object.assign(body.style, { padding: "10px", display: "flex", flexDirection: "column", gap: "8px", flex: "1 1 auto", overflow: "auto", backgroundColor: "transparent" });
+
+    const input = overlay.querySelector("#penpal-input");
+    Object.assign(input.style, { width: "100%", minHeight: "72px", resize: "none", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.03)", color: "white", padding: "8px", boxSizing: "border-box", fontSize: "13px" });
+
+    const sendBtn = overlay.querySelector("#penpal-send");
+    Object.assign(sendBtn.style, { background: "linear-gradient(180deg, #7e57c2, #6a3eb6)", color: "white", border: "none", padding: "8px 12px", borderRadius: "8px", cursor: "pointer", alignSelf: "flex-start" });
+
+    const response = overlay.querySelector("#penpal-response");
+    Object.assign(response.style, { background: "rgba(255,255,255,0.02)", borderRadius: "6px", padding: "8px", minHeight: "40px", color: "white", border: "1px solid rgba(255,255,255,0.02)", fontSize: "13px" });
+
     document.body.appendChild(overlay);
     G.overlay = overlay;
 
-    // Dragging logic (header)
-    let dragging = false;
-    let dragOffsetX = 0;
-    let dragOffsetY = 0;
-
+    // dragging, resize save, minimize, close (same robust logic as before)
+    let dragging = false, dragOffsetX = 0, dragOffsetY = 0;
     header.addEventListener("mousedown", (e) => {
-      // If clicking control buttons, don't start drag
-      if (e.target.closest("#penpal-controls")) return;
+      if (e.target.closest("#penpal-controls")) return; // clicking control -> no drag
       dragging = true;
-      // compute offset relative to viewport
       const rect = overlay.getBoundingClientRect();
       dragOffsetX = e.clientX - rect.left;
       dragOffsetY = e.clientY - rect.top;
-
       document.addEventListener("mousemove", onDrag);
       document.addEventListener("mouseup", onDragEnd);
     });
-
     function onDrag(e) {
       if (!dragging) return;
       e.preventDefault();
@@ -232,75 +132,238 @@
       overlay.style.left = `${Math.min(left, window.innerWidth - 40)}px`;
       overlay.style.top = `${Math.min(top, window.innerHeight - 40)}px`;
     }
+    function onDragEnd() { if (!dragging) return; dragging = false; document.removeEventListener("mousemove", onDrag); document.removeEventListener("mouseup", onDragEnd); saveOverlayRect(); }
 
-    function onDragEnd() {
-      if (!dragging) return;
-      dragging = false;
-      document.removeEventListener("mousemove", onDrag);
-      document.removeEventListener("mouseup", onDragEnd);
-      // persist
-      saveOverlayRect();
-    }
-
-    // Resize handling: save on mouseup when user resizes
-    overlay.addEventListener("mouseup", (e) => {
-      // if overlay is not minimized, save size/pos after user finishes resizing
-      if (!G.isMinimized) saveOverlayRect();
-    });
-
-    // Prevent text selection during drag
+    overlay.addEventListener("mouseup", () => { if (!G.isMinimized) saveOverlayRect(); });
     header.addEventListener("dragstart", (e) => e.preventDefault());
 
-    // Minimize / restore behavior
     const minimizeBtn = overlay.querySelector("#penpal-minimize");
     const closeBtn = overlay.querySelector("#penpal-close");
+    minimizeBtn.addEventListener("click", () => toggleMinimize());
+    closeBtn.addEventListener("click", removeOverlay);
 
-    minimizeBtn.addEventListener("click", () => {
-      toggleMinimize();
-    });
-
-    closeBtn.addEventListener("click", () => {
-      removeOverlay();
-    });
-
-    // Send (placeholder AI call)
     sendBtn.addEventListener("click", () => {
       const txt = input.value.trim();
       if (!txt) return;
       response.textContent = "Thinking...";
-      chrome.runtime.sendMessage({ type: "aiQuery", text: txt }, (res) => {
-        response.textContent = res?.result || "No response.";
+      chrome.runtime.sendMessage({ type: "aiQuery", text: txt }, (res) => { response.textContent = res?.result || "No response."; });
+    });
+
+    // ---------- Select Content button behavior ----------
+    let selecting = false;
+    let selectorEl = null;
+    let startX = 0, startY = 0, curX = 0, curY = 0;
+
+    const selectBtnEl = overlay.querySelector("#penpal-select");
+    selectBtnEl.addEventListener("click", () => {
+      if (selecting) return; // already selecting
+      startSelectionMode();
+    });
+
+    function startSelectionMode() {
+      // Guard: do not start if overlay is minimized or multiple active
+      if (!G.overlay || G.isMinimized) return;
+      selecting = true;
+
+      // Create a full-screen neutral overlay that captures events
+      selectorEl = document.createElement("div");
+      Object.assign(selectorEl.style, {
+        position: "fixed",
+        inset: "0",
+        zIndex: 2147483646, // just below PenPal overlay
+        cursor: "crosshair",
+        background: "rgba(0,0,0,0.15)"
       });
-    });
+      // instruction HUD near top
+      const hud = document.createElement("div");
+      hud.textContent = "Drag to select area. Press ESC or Cancel to abort.";
+      Object.assign(hud.style, { position: "fixed", top: "12px", left: "50%", transform: "translateX(-50%)", zIndex: 2147483647, background: "rgba(0,0,0,0.6)", color: "white", padding: "6px 10px", borderRadius: "6px", fontSize: "13px" });
 
-    // Make overlay keyboard accessible - close on Escape
-    overlay.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        removeOverlay();
+      // cancel button
+      const cancelBtn = document.createElement("button");
+      cancelBtn.textContent = "Cancel";
+      Object.assign(cancelBtn.style, { position: "fixed", top: "12px", right: "12px", zIndex: 2147483647, padding: "6px 10px", background: "#6a3eb6", color: "white", border: "none", borderRadius: "6px", cursor: "pointer" });
+
+      document.body.appendChild(selectorEl);
+      document.body.appendChild(hud);
+      document.body.appendChild(cancelBtn);
+
+      // rect preview
+      const rectPreview = document.createElement("div");
+      Object.assign(rectPreview.style, {
+        position: "fixed",
+        border: "2px dashed rgba(126,87,194,0.95)",
+        background: "rgba(126,87,194,0.12)",
+        zIndex: 2147483647,
+        display: "none",
+        pointerEvents: "none"
+      });
+      document.body.appendChild(rectPreview);
+
+      // listeners
+      function onPointerDown(e) {
+        // only left button or touch
+        if (e.button !== undefined && e.button !== 0) return;
+        startX = e.clientX;
+        startY = e.clientY;
+        curX = startX;
+        curY = startY;
+        rectPreview.style.left = `${startX}px`;
+        rectPreview.style.top = `${startY}px`;
+        rectPreview.style.width = `0px`;
+        rectPreview.style.height = `0px`;
+        rectPreview.style.display = "block";
+        selectorEl.setPointerCapture?.(e.pointerId);
       }
+
+      function onPointerMove(e) {
+        if (rectPreview.style.display === "none") return;
+        curX = e.clientX; curY = e.clientY;
+        const left = Math.min(startX, curX);
+        const top = Math.min(startY, curY);
+        const w = Math.abs(curX - startX);
+        const h = Math.abs(curY - startY);
+        rectPreview.style.left = `${left}px`;
+        rectPreview.style.top = `${top}px`;
+        rectPreview.style.width = `${w}px`;
+        rectPreview.style.height = `${h}px`;
+      }
+
+      function onPointerUp(e) {
+        if (rectPreview.style.display === "none") return;
+        // finalize rect
+        const left = parseInt(rectPreview.style.left, 10);
+        const top = parseInt(rectPreview.style.top, 10);
+        const w = parseInt(rectPreview.style.width, 10);
+        const h = parseInt(rectPreview.style.height, 10);
+        // minimal size guard
+        if (w < 8 || h < 8) {
+          // too small — abort selection
+          cleanupSelection();
+          alert("Selection too small. Try again.");
+          return;
+        }
+        // proceed to capture visible tab and crop
+        finalizeSelection({ left, top, width: w, height: h });
+        cleanupSelection();
+      }
+
+      function onKeyDown(e) {
+        if (e.key === "Escape") {
+          cleanupSelection();
+        }
+      }
+
+      cancelBtn.addEventListener("click", cleanupSelection);
+      selectorEl.addEventListener("pointerdown", onPointerDown);
+      selectorEl.addEventListener("pointermove", onPointerMove);
+      selectorEl.addEventListener("pointerup", onPointerUp);
+      selectorEl.addEventListener("pointercancel", cleanupSelection);
+      window.addEventListener("keydown", onKeyDown, { capture: true });
+
+      // cleanup routine
+      function cleanupSelection() {
+        selecting = false;
+        rectPreview.remove();
+        selectorEl.remove();
+        hud.remove();
+        cancelBtn.remove();
+        selectorEl.removeEventListener("pointerdown", onPointerDown);
+        selectorEl.removeEventListener("pointermove", onPointerMove);
+        selectorEl.removeEventListener("pointerup", onPointerUp);
+        window.removeEventListener("keydown", onKeyDown, { capture: true });
+      }
+    } // end startSelectionMode
+
+// finalize: crop screenshot, show thumbnail, and send to background
+async function finalizeSelection(rect) {
+  try {
+    const capResp = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "CAPTURE_VISIBLE" }, (resp) => resolve(resp));
     });
 
-    // On creation, ensure overlay has stored size & minimized state applied
+    if (!capResp || !capResp.success || !capResp.dataUrl) {
+      alert("Failed to capture screen. Make sure extension has permission and the page is not restricted.");
+      return;
+    }
+
+    const img = new Image();
+    img.onload = async () => {
+      const dpr = window.devicePixelRatio || 1;
+      const canvas = document.createElement("canvas");
+      const sx = Math.round(rect.left * dpr);
+      const sy = Math.round(rect.top * dpr);
+      const sw = Math.round(rect.width * dpr);
+      const sh = Math.round(rect.height * dpr);
+      canvas.width = sw;
+      canvas.height = sh;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+      const cropped = canvas.toDataURL("image/png");
+
+      // 🖼️ Create temporary thumbnail preview
+      const thumb = document.createElement("img");
+      thumb.src = cropped;
+      Object.assign(thumb.style, {
+        position: "fixed",
+        bottom: "20px",
+        right: "20px",
+        width: "160px",
+        height: "auto",
+        border: "2px solid rgba(126,87,194,0.8)",
+        borderRadius: "8px",
+        boxShadow: "0 0 10px rgba(0,0,0,0.5)",
+        zIndex: 2147483647,
+        background: "black",
+        transition: "opacity 0.5s ease",
+      });
+      document.body.appendChild(thumb);
+
+      // Auto-fade and remove thumbnail after 5 seconds
+      setTimeout(() => {
+        thumb.style.opacity = "0";
+        setTimeout(() => thumb.remove(), 600);
+      }, 5000);
+
+      // 🧠 Send to background AI handler
+      const aiResp = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: "aiImage", image: cropped }, (r) => resolve(r));
+      });
+
+      const respEl = G.overlay?.querySelector("#penpal-response");
+      if (aiResp && aiResp.success && aiResp.result) {
+        if (respEl) respEl.textContent = aiResp.result;
+      } else {
+        if (respEl) respEl.textContent = aiResp?.error || "AI processing failed.";
+      }
+    };
+
+    img.onerror = () => {
+      alert("Failed to load captured screenshot image.");
+    };
+    img.src = capResp.dataUrl;
+  } catch (err) {
+    console.error("finalizeSelection error:", err);
+    alert("An error occurred while processing the selection.");
+  }
+}
+
+    // expose a small indicator while selecting (optional)
+    // end of Select Content logic
+
+    // ensure saved minimized state applied
     applySavedState();
 
     return overlay;
   } // end createOverlay
 
-  // Save current overlay style rect (top/left/width/height)
+  // Save current overlay rect to localStorage
   function saveOverlayRect() {
     if (!G.overlay) return;
     const rect = G.overlay.getBoundingClientRect();
-    const state = {
-      top: `${Math.round(rect.top)}px`,
-      left: `${Math.round(rect.left)}px`,
-      width: `${Math.round(rect.width)}px`,
-      height: `${Math.round(rect.height)}px`,
-      minimized: !!G.isMinimized
-    };
+    const state = { top: `${Math.round(rect.top)}px`, left: `${Math.round(rect.left)}px`, width: `${Math.round(rect.width)}px`, height: `${Math.round(rect.height)}px`, minimized: !!G.isMinimized };
     saveState(state);
   }
-
-  // Apply saved state (position/size, and restore minimized state if previously minimized)
   function applySavedState() {
     const state = loadState();
     if (!G.overlay) return;
@@ -309,48 +372,31 @@
     if (state.width) G.overlay.style.width = state.width;
     if (state.height) G.overlay.style.height = state.height;
     if (state.minimized) {
-      // apply minimized but preserve savedSize
       G.savedSize = { width: state.width, height: state.height };
       performMinimize(true);
     } else {
       G.isMinimized = false;
-      G.overlay.style.resize = "both";
+      if (G.overlay) G.overlay.style.resize = "both";
     }
   }
+  function removeOverlay() { if (G.overlay) { try { G.overlay.remove(); } catch {} G.overlay = null; } G.isMinimized = false; }
 
-  // Remove overlay cleanly
-  function removeOverlay() {
-    if (G.overlay) {
-      try {
-        G.overlay.remove();
-      } catch {}
-      G.overlay = null;
-    }
-    G.isMinimized = false;
-  }
-
-  // Minimize helper that can be forced (init)
   function performMinimize(init=false) {
     if (!G.overlay) return;
     const overlay = G.overlay;
     const body = overlay.querySelector("#penpal-body");
     if (!G.isMinimized) {
-      // go into minimized state: store current size first
+      // store current size
       const rect = overlay.getBoundingClientRect();
       G.savedSize = { width: `${Math.round(rect.width)}px`, height: `${Math.round(rect.height)}px` };
-
-      // set to header-only height, keep title visible
-      const headerHeight = 44; // px
+      const headerHeight = 44;
       overlay.style.height = `${headerHeight}px`;
-      overlay.style.width = G.savedSize.width || "160px"; // keep width similar
+      overlay.style.width = G.savedSize.width || "160px";
       body.style.display = "none";
-      overlay.style.resize = "none"; // disable resize while minimized
+      overlay.style.resize = "none";
       G.isMinimized = true;
-      // update minimize button visual
-      const btn = overlay.querySelector("#penpal-minimize");
-      if (btn) btn.textContent = "+";
+      const btn = overlay.querySelector("#penpal-minimize"); if (btn) btn.textContent = "+";
     } else {
-      // restore
       const w = (G.savedSize && G.savedSize.width) ? G.savedSize.width : "360px";
       const h = (G.savedSize && G.savedSize.height) ? G.savedSize.height : "220px";
       overlay.style.width = w;
@@ -358,38 +404,28 @@
       overlay.querySelector("#penpal-body").style.display = "flex";
       overlay.style.resize = "both";
       G.isMinimized = false;
-      const btn = overlay.querySelector("#penpal-minimize");
-      if (btn) btn.textContent = "–";
+      const btn = overlay.querySelector("#penpal-minimize"); if (btn) btn.textContent = "–";
     }
-    // persist after minimize/restore (unless initial apply)
     if (!init) saveOverlayRect();
   }
+  function toggleMinimize() { performMinimize(); }
 
-  function toggleMinimize() {
-    performMinimize();
-  }
-
-  // Toggle overlay (show/hide) — ensures single instance
   function toggleOverlay() {
-    // If overlay exists in DOM, remove it (toggle off)
     if (G.overlay && G.overlay.isConnected) {
       removeOverlay();
       return;
     }
-
-    // Else create and attach
     createOverlay();
   }
 
-  // Message listener: external callers use {type: "TOGGLE_PENPAL_OVERLAY"}
-  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Listen for background/popup messages
+  chrome.runtime.onMessage.addListener((msg) => {
     if (!msg || !msg.type) return;
-    if (msg.type === "TOGGLE_PENPAL_OVERLAY") {
-      toggleOverlay();
-    }
-    // we don't call sendResponse here
+    if (msg.type === "TOGGLE_PENPAL_OVERLAY") toggleOverlay();
   });
 
-  // expose toggle globally (optional) so page-injected scripts can call window.__penpal_global.toggle()
+  // expose toggle
   G.toggle = toggleOverlay;
 })();
+
+
