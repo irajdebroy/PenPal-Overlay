@@ -3,7 +3,7 @@
   "name": "PenPal",
   "version": "1.0",
   "description": "Understand anything, instantly. Your AI study companion that lives right on your screen.",
-  "permissions": ["activeTab", "scripting"],
+  "permissions": ["activeTab", "scripting", "tabs"],
   "background": {
     "service_worker": "background.js"
   },
